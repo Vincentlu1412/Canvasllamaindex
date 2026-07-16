@@ -1,0 +1,12 @@
+[
+  {
+    "id": "Q01",
+    "category": "Deadlines",
+    "question": "What happens if I turn in my Capstone Prep Sheet past 8 PM tonight?",
+    "ground_truth": "Late submissions are subject to a 10% penalty per hour up to 24 hours, after which they are graded as zero.",
+    "expected_source_metadata": {
+      "source_file": "Applied_AI_Syllabus_2026.pdf",
+      "page_label": "3"
+    }
+  }
+]

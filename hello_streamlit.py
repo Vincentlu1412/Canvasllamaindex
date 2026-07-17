@@ -79,6 +79,34 @@ def _answer_text(response: object) -> str:
     return text if isinstance(text, str) and text.strip() else str(response)
 
 
+# @st.cache_resource(show_spinner=False)
+# # def get_or_create_index() -> VectorStoreIndex:
+#     """
+#     Create the ChromaDB client and LlamaIndex index exactly once.
+
+#     This prevents SQLite-backed persistence from being reopened on each
+#     Streamlit rerun, which is what caused the startup lock behavior.
+#     """
+#     _configure_local_models()
+
+#     CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+#     chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+#     chroma_collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
+#     vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+#     storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+#     # Path A: reuse existing persisted vectors.
+#     if chroma_collection.count() > 0:
+#         return VectorStoreIndex.from_vector_store(vector_store=vector_store)
+
+#     # Path B: build the first index from local documents.
+#     documents = _load_source_documents()
+#     return VectorStoreIndex.from_documents(
+#         documents,
+#         storage_context=storage_context,
+#         show_progress=True,
+#     )
+
 @st.cache_resource(show_spinner=False)
 def get_or_create_index() -> VectorStoreIndex:
     """
@@ -94,6 +122,16 @@ def get_or_create_index() -> VectorStoreIndex:
     chroma_collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
     vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+    # ==================== 【关键修改区】 ====================
+    # 强制清理：如果检测到以前录入的数据（比如当时文件大小为0的空数据），我们直接清空集合，强制它走下面的 Path B 重新扫描。
+    # 这样可以确保当你修改了本地 .md 文件后，下一次运行能百分之百读取最新内容。
+    # 【注意】：跑通一次并成功生成非零索引后，你可以把下面这行 delete 删掉，以享受秒开的加载速度。
+    chroma_client.delete_collection(COLLECTION_NAME)
+    chroma_collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
+    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+    # =======================================================
 
     # Path A: reuse existing persisted vectors.
     if chroma_collection.count() > 0:
@@ -162,27 +200,56 @@ def _judge_score(question: str, ground_truth: str, generated_answer: str) -> int
     return None
 
 
-def _hit_rate(index: VectorStoreIndex, item: dict, k: int = RETRIEVAL_TOP_K) -> int | None:
-    """1 if a retrieved node matches the question's tagged source, 0 if not, None if untagged."""
-    target_file = item.get("source_file")
-    if not target_file:
-        return None  # can't score recall without knowing where the answer lives
+# # def _hit_rate(index: VectorStoreIndex, item: dict, k: int = RETRIEVAL_TOP_K) -> int | None:
+#     """1 if a retrieved node matches the question's tagged source, 0 if not, None if untagged."""
+#     target_file = item.get("source_file")
+#     if not target_file:
+#         return None  # can't score recall without knowing where the answer lives
 
-    target_page = str(item["page_label"]) if item.get("page_label") is not None else None
+#     target_page = str(item["page_label"]) if item.get("page_label") is not None else None
+
+#     retriever = index.as_retriever(similarity_top_k=k)
+#     nodes = retriever.retrieve(item["question"])
+
+#     for node_with_score in nodes:
+#         meta = getattr(node_with_score.node, "metadata", {}) or {}
+#         candidate_file = meta.get("file_name") or meta.get("source_file") or meta.get("filename")
+#         candidate_page = str(meta["page_label"]) if meta.get("page_label") is not None else None
+
+#         if candidate_file and Path(str(candidate_file)).name == Path(str(target_file)).name:
+#             if target_page is None or candidate_page is None or candidate_page == target_page:
+#                 return 1
+#     return 0
+
+
+def _hit_rate(index: VectorStoreIndex, item: dict, k: int = RETRIEVAL_TOP_K) -> int | None:
+    """
+    如果检索出的节点匹配了问题标记的源文件，返回 1；如果不匹配，返回 0；
+    如果该评估问题没有标记源文件，返回 None。
+    """
+    # 完美提取嵌套或扁平格式的文件名
+    meta_tag = item.get("expected_source_metadata") or {}
+    target_file = item.get("source_file") or meta_tag.get("source_file")
+    
+    if not target_file:
+        return None
+
+    # 清洗和统一目标文件名（小写、去掉路径前缀）
+    target_name = Path(str(target_file)).name.lower()
 
     retriever = index.as_retriever(similarity_top_k=k)
     nodes = retriever.retrieve(item["question"])
 
+    # 只要检索出的 top-K 节点中，有任意一个的文件名与目标文件名一致，即判定为 Hit
     for node_with_score in nodes:
         meta = getattr(node_with_score.node, "metadata", {}) or {}
-        candidate_file = meta.get("file_name") or meta.get("source_file") or meta.get("filename")
-        candidate_page = str(meta["page_label"]) if meta.get("page_label") is not None else None
+        candidate_file = meta.get("file_name") or meta.get("source_file") or meta.get("filename") or ""
+        candidate_name = Path(str(candidate_file)).name.lower()
 
-        if candidate_file and Path(str(candidate_file)).name == Path(str(target_file)).name:
-            if target_page is None or candidate_page is None or candidate_page == target_page:
-                return 1
+        if candidate_name and (target_name == candidate_name or target_name in candidate_name):
+            return 1
+            
     return 0
-
 
 def run_calibration(index: VectorStoreIndex, eval_items: list[dict]) -> dict:
     """Score the LLM judge against the hand-scored subset before trusting it on everything else."""

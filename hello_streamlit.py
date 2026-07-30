@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Iterable
 
 import chromadb
+import requests
 import streamlit as st
 from llama_index.core import Document, Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.ollama import Ollama
 from llama_index.vector_stores.chroma import ChromaVectorStore
+
+from canvas_client import CanvasClient, CanvasNotConfigured
 
 
 APP_TITLE = "Local Berkeley Canvas Assistant"
@@ -87,6 +90,43 @@ def _configure_local_models() -> None:
 def _answer_text(response: object) -> str:
     text = getattr(response, "response", None)
     return text if isinstance(text, str) and text.strip() else str(response)
+
+
+@st.cache_resource(show_spinner=False)
+def get_personal_canvas_index() -> tuple[VectorStoreIndex | None, str]:
+    """Build an in-memory index over the signed-in student's own Canvas data.
+
+    Deliberately NOT persisted to ChromaDB alongside the public campus docs:
+
+    * Personal course/assignment data must never end up on disk in a repo
+      directory where it could be committed by accident.
+    * Deadlines and announcements change, so a cached-to-disk copy would go
+      stale and start giving wrong answers -- exactly the failure mode this
+      project exists to avoid.
+
+    Returns (index, status_message). index is None when Canvas isn't
+    configured, which is the normal case for anyone running the public demo.
+    """
+    try:
+        client = CanvasClient.from_env()
+    except CanvasNotConfigured as exc:
+        return None, str(exc)
+
+    try:
+        documents = client.fetch_documents()
+    except requests.HTTPError as exc:
+        status = getattr(exc.response, "status_code", None)
+        if status in (401, 403):
+            return None, "Canvas rejected the token (401/403). It may be expired or revoked — generate a new one."
+        return None, f"Canvas API request failed: {exc}"
+    except requests.RequestException as exc:
+        return None, f"Could not reach Canvas: {exc}"
+
+    if not documents:
+        return None, "Canvas returned no active courses for this token."
+
+    _configure_local_models()
+    return VectorStoreIndex.from_documents(documents), f"Loaded {len(documents)} personal Canvas records."
 
 
 @st.cache_resource(show_spinner=False)
@@ -343,6 +383,8 @@ with st.sidebar:
         st.write(f"**LLM model:** `{OLLAMA_MODEL}`")
         st.write(f"**Ollama URL:** `{OLLAMA_BASE_URL}`")
         st.write(f"**Eval set:** `{EVAL_SET_PATH}`")
+        # Deliberately shows only the host, never the token itself.
+        st.write(f"**Canvas host:** `{os.getenv('CANVAS_BASE_URL') or 'not configured'}`")
     st.divider()
     st.caption("If the index is still loading, this sidebar stays available so the page never looks frozen.")
 
@@ -355,7 +397,26 @@ with st.spinner("Initializing Local Vector Database & Local Models... Please wai
 
 st.success("Assistant ready for you! 🎉", icon="✅")
 
+# Canvas is strictly optional — the app is fully usable without it, so a
+# missing token is an info note, not an error.
+if os.getenv("CANVAS_API_TOKEN"):
+    st.caption(f"Canvas: {canvas_status}")
+
+personal_index, canvas_status = get_personal_canvas_index()
+
 st.subheader("Ask anything about campus life! 🐻")
+
+if personal_index is not None:
+    scope = st.radio(
+        "What should I search?",
+        ["Public campus info", "My Canvas courses"],
+        horizontal=True,
+        help="Public campus info is the shared knowledge base. My Canvas courses "
+        "searches only your own enrolled courses, assignments, and announcements.",
+    )
+else:
+    scope = "Public campus info"
+
 user_query = st.text_input(
     "Question",
     placeholder="Try asking about deadlines, library hours, or facilities.",
@@ -363,7 +424,8 @@ user_query = st.text_input(
 
 if st.button("Run Query", type="primary"):
     if user_query.strip():
-        query_engine = index.as_query_engine(similarity_top_k=5, response_mode="compact")
+        active_index = personal_index if scope == "My Canvas courses" else index
+        query_engine = active_index.as_query_engine(similarity_top_k=5, response_mode="compact")
         with st.spinner("Thinking, just a moment..."):
             response = query_engine.query(user_query)
         st.markdown("### Answer")

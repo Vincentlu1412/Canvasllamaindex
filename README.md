@@ -56,6 +56,10 @@ to catch that failure mode, not just to measure "does it sound right."
 - 🔄 **Repeatable data pipeline** — `scripts/sync_source_docs.py` re-fetches
   the configured official pages so source docs can be refreshed instead of
   going stale silently.
+- 🎓 **Optional personal Canvas integration** — connect your own Canvas
+  courses with a personal access token to ask about your assignments and
+  deadlines. Personal data is indexed in memory in a *separate* index from
+  the public knowledge base, never persisted to disk, never committed.
 
 ## A real bug this project already found (and fixed)
 
@@ -125,6 +129,47 @@ and want to force a rebuild, set `FORCE_REINDEX=1`:
 FORCE_REINDEX=1 streamlit run hello_streamlit.py
 ```
 
+### Optional: connect your own Canvas courses
+
+The assistant can additionally answer questions about **your own** Canvas
+(bCourses) courses — assignments, due dates, announcements — alongside the
+public campus knowledge base.
+
+This uses a **personal access token**, which is the only officially
+supported way to reach the Canvas API. It is not your password, it only
+grants access to data your own account can already see, and you can revoke
+it at any time.
+
+1. In Canvas, go to **Account → Settings → Approved Integrations →
+   "+ New Access Token"**. Give it a purpose and (recommended) a short
+   expiry date. Copy the token — Canvas only shows it once.
+2. `cp .env.example .env` and fill in:
+   ```bash
+   CANVAS_BASE_URL=https://bcourses.berkeley.edu   # your school's Canvas host
+   CANVAS_API_TOKEN=<the token you just generated>
+   ```
+   Your Canvas host must match where you generated the token — Canvas is
+   multi-tenant, and every school runs its own instance
+   (`bcourses.berkeley.edu`, `ucommons.instructure.com`,
+   `canvas.<school>.edu`, ...). There is intentionally no default.
+3. Restart the app. A **"Public campus info" / "My Canvas courses"** toggle
+   appears above the question box.
+
+**How your data is handled:**
+- Personal Canvas data is indexed **in memory only**. It is never written
+  to `chroma_db/` alongside the public docs, so it can't be committed by
+  accident and can't go stale on disk.
+- It lives in a **separate index** from the public knowledge base, so a
+  question about library hours can never accidentally retrieve your grades.
+- `.env` is gitignored. The token is never logged; the developer panel
+  shows only the Canvas *host*, never the token.
+- Everything still runs locally — your course data goes to your local
+  Ollama model, not to any third-party API.
+
+> **Never put a token (or a password) directly in code, in a commit, or in
+> a chat/issue.** A public repo's git history is permanent — a token
+> committed and then deleted is still a leaked token and must be revoked.
+
 ### Configuration
 
 All configuration is via environment variables (see `hello_streamlit.py`
@@ -139,19 +184,24 @@ for defaults):
 | `LLAMAINDEX_DOCS_DIR` | `data/source_docs` | Source docs directory |
 | `EVAL_SET_PATH` | `eval_set.json` | Evaluation set path |
 | `FORCE_REINDEX` | unset | Set to `1` to wipe and rebuild the vector store on next run |
+| `CANVAS_BASE_URL` | *(none)* | Your school's Canvas host. Required for Canvas integration; no default by design |
+| `CANVAS_API_TOKEN` | *(none)* | Canvas personal access token. Optional — the app works fully without it |
 
 ## Project structure
 
 ```
 .
 ├── hello_streamlit.py          # App: indexing, query UI, eval harness
+├── canvas_client.py            # Read-only Canvas API client (personal access token)
 ├── data/
 │   └── source_docs/            # Curated, per-section-cited Markdown knowledge base
 ├── eval_set.json               # 30 answerable + 15 unanswerable eval questions
 ├── scripts/
 │   └── sync_source_docs.py     # Re-fetches official pages for manual review
 ├── tests/
-│   └── test_eval_set.py        # Regression tests for the eval-set leakage bug
+│   ├── test_eval_set.py        # Regression tests for the eval-set leakage bug
+│   └── test_canvas_client.py   # Pagination, HTML stripping, config guards
+├── .env.example                # Template for local secrets (copy to .env)
 └── .github/workflows/ci.yml    # Runs the test suite on every push
 ```
 
@@ -184,14 +234,13 @@ changes by hand, keeping the declarative, citation-per-section style.
 
 ## Roadmap
 
-- **Canvas (bCourses) personal integration** — read-only access to a
-  student's own courses, assignments, and deadlines via a
-  [Canvas personal access token](https://community.canvaslms.com/t5/Canvas-Basics-Guide/How-do-I-manage-API-access-tokens-as-an-admin/ta-p/89)
-  the student generates themselves (no shared credentials, no institutional
-  approval needed — it's scoped to data the token owner already has access
-  to). **Note:** this is architecturally different from LTI integration,
-  which would require UC Berkeley's Canvas admin to register the app and is
-  out of scope for an independent project.
+- **LTI integration** — running *inside* Canvas as a registered tool rather
+  than as a separate app. Architecturally different from the personal-token
+  integration above: LTI requires the institution's Canvas admin to register
+  a developer key, so it's out of reach for an independent project without
+  the university's involvement.
+- Assignment-deadline awareness in the personal index (e.g. "what's due this
+  week?" needs date-range filtering, not just semantic similarity).
 - Broaden `data/source_docs/` coverage (financial aid, international
   student services, housing, registrar/academic calendar) via
   `scripts/sync_source_docs.py` against verified official URLs.

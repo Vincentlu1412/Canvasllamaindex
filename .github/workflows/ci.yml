@@ -13,5 +13,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install pytest
+      # Only the lightweight deps the test suite actually needs — the tests
+      # deliberately avoid the embedding/LLM stack so CI stays fast.
+      - run: pip install pytest requests
       - run: python -m pytest tests/ -v

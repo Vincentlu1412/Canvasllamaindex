@@ -1,9 +1,14 @@
 # Local vector store — regenerated from data/source_docs/ on first run.
 chroma_db/
 
+# Raw output of scripts/sync_source_docs.py — working cache for manual
+# review, not curated content, so it isn't committed.
+data/raw_scrapes/
+
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Local env files, if added later
 .env

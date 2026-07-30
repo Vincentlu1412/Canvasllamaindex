@@ -1,0 +1,9 @@
+# Local vector store — regenerated from data/source_docs/ on first run.
+chroma_db/
+
+# Python
+__pycache__/
+*.pyc
+
+# Local env files, if added later
+.env

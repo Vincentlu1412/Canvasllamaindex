@@ -1,7 +1,13 @@
 # Accessibility & Campus Safety
 
+_Last reviewed: 2026-07-30_
+
 ## Disabled Students' Program (DSP)
-Where can I find accessibility resources for students with disabilities? The Disabled Students' Program (DSP) provides accommodations and accessibility services for eligible students with disabilities. Services include academic accommodations, assistive technology, alternative media, accessible housing support, and advising. Students can find eligibility information and request accommodations through the DSP website.
+_Source: https://dsp.berkeley.edu/_
+
+The Disabled Students' Program (DSP) provides accommodations and accessibility services for eligible UC Berkeley students with disabilities. Services include academic accommodations, assistive technology, alternative media, accessible housing support, and advising. Eligibility requirements and the accommodation request process are described on the DSP website.
 
 ## Emergency and Campus Safety
-Where can I find emergency contact and campus safety information? Emergency contact information and campus safety resources are available through the UC Berkeley Police Department (UCPD). The website provides emergency phone numbers, crime alerts, safety escorts, emergency preparedness information, and procedures for reporting emergencies or suspicious activity.
+_Source: https://ucpd.berkeley.edu/_
+
+The UC Berkeley Police Department (UCPD) maintains campus safety resources, including emergency phone numbers, crime alert notifications, safety escort services, emergency preparedness guidance, and procedures for reporting emergencies or suspicious activity.

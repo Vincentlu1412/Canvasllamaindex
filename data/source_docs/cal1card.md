@@ -1,7 +1,13 @@
-# Cal 1 Card (Student ID ID)
+# Cal 1 Card (Student ID)
 
-## How to obtain your Cal 1 Card
-Students can obtain a Cal 1 Card by completing the online application process after activating their CalNet ID. Once the application is approved, students can pick up their card at the Cal 1 Card Office by presenting a valid government-issued photo ID. The Cal 1 Card serves as the official UC Berkeley identification card and provides access to campus services and facilities.
+_Last reviewed: 2026-07-30_
+
+## Obtaining a Cal 1 Card
+_Source: https://cal1card.berkeley.edu/_
+
+New students obtain a Cal 1 Card by completing the online Cal 1 Card application after their CalNet ID has been activated. Once the application is approved, the card is picked up in person at the Cal 1 Card Office with a valid government-issued photo ID. The Cal 1 Card is UC Berkeley's official identification card and is required for access to many campus services and facilities.
 
 ## Lost or Stolen Cards
-What should I do if I lose my Cal 1 Card? If a Cal 1 Card is lost or stolen, students should immediately deactivate the card through the Cal 1 Card Office website and request a replacement. A replacement fee of $25 may apply. The Cal 1 Card Office provides detailed instructions for reporting and replacing lost cards.
+_Source: https://cal1card.berkeley.edu/_
+
+A lost or stolen Cal 1 Card should be deactivated immediately through the Cal 1 Card Office website, and a replacement can be requested online. A replacement fee (currently around $25; confirm the exact amount on the Cal 1 Card Office site) applies. Step-by-step instructions for reporting and replacing a lost card are on the Cal 1 Card Office website.

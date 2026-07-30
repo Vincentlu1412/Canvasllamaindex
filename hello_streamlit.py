@@ -18,7 +18,12 @@ APP_TITLE = "Local Berkeley Canvas Assistant"
 APP_SUBTITLE = "Fully local LlamaIndex + ChromaDB + Ollama stack."
 CHROMA_DIR = Path(os.getenv("CHROMA_PERSIST_DIR", "chroma_db"))
 COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "documents")
-DOCS_DIR = Path(os.getenv("LLAMAINDEX_DOCS_DIR", "data"))
+# Points at data/source_docs specifically (not data/), so eval_set.json and
+# other non-content files in data/ never get swept into the index by
+# SimpleDirectoryReader's recursive scan. This was a real leak: the eval
+# questions and ground-truth answers were previously being embedded as
+# retrievable documents.
+DOCS_DIR = Path(os.getenv("LLAMAINDEX_DOCS_DIR", "data/source_docs"))
 EVAL_SET_PATH = Path(os.getenv("EVAL_SET_PATH", "eval_set.json"))
 
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
@@ -38,7 +43,7 @@ st.set_page_config(page_title=APP_TITLE, page_icon="📚", layout="wide")
 
 
 def _iter_document_dirs() -> Iterable[Path]:
-    candidates = [DOCS_DIR, Path("documents"), Path("docs"), Path("data/docs")]
+    candidates = [DOCS_DIR, Path("documents"), Path("docs")]
     seen: set[Path] = set()
     for candidate in candidates:
         if candidate in seen:
@@ -50,7 +55,12 @@ def _iter_document_dirs() -> Iterable[Path]:
 def _load_source_documents() -> list[Document]:
     for candidate in _iter_document_dirs():
         if candidate.exists() and candidate.is_dir():
-            docs = SimpleDirectoryReader(str(candidate), recursive=True).load_data()
+            # required_exts pins this to markdown content only, so a stray
+            # .json/.db/other file dropped into the docs folder never gets
+            # silently embedded as "knowledge" (see DOCS_DIR comment above).
+            docs = SimpleDirectoryReader(
+                str(candidate), recursive=True, required_exts=[".md"]
+            ).load_data()
             if docs:
                 return docs
 
@@ -79,34 +89,6 @@ def _answer_text(response: object) -> str:
     return text if isinstance(text, str) and text.strip() else str(response)
 
 
-# @st.cache_resource(show_spinner=False)
-# # def get_or_create_index() -> VectorStoreIndex:
-#     """
-#     Create the ChromaDB client and LlamaIndex index exactly once.
-
-#     This prevents SQLite-backed persistence from being reopened on each
-#     Streamlit rerun, which is what caused the startup lock behavior.
-#     """
-#     _configure_local_models()
-
-#     CHROMA_DIR.mkdir(parents=True, exist_ok=True)
-#     chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-#     chroma_collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
-#     vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-#     storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
-#     # Path A: reuse existing persisted vectors.
-#     if chroma_collection.count() > 0:
-#         return VectorStoreIndex.from_vector_store(vector_store=vector_store)
-
-#     # Path B: build the first index from local documents.
-#     documents = _load_source_documents()
-#     return VectorStoreIndex.from_documents(
-#         documents,
-#         storage_context=storage_context,
-#         show_progress=True,
-#     )
-
 @st.cache_resource(show_spinner=False)
 def get_or_create_index() -> VectorStoreIndex:
     """
@@ -114,24 +96,26 @@ def get_or_create_index() -> VectorStoreIndex:
 
     This prevents SQLite-backed persistence from being reopened on each
     Streamlit rerun, which is what caused the startup lock behavior.
+
+    Set FORCE_REINDEX=1 to wipe the persisted collection and rebuild from
+    data/source_docs on the next run (e.g. right after editing the .md
+    files) instead of permanently forcing a full rebuild on every single
+    run, which defeated the point of @st.cache_resource / persistence.
     """
     _configure_local_models()
 
     CHROMA_DIR.mkdir(parents=True, exist_ok=True)
     chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-    chroma_collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
-    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-    storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-    # ==================== 【关键修改区】 ====================
-    # 强制清理：如果检测到以前录入的数据（比如当时文件大小为0的空数据），我们直接清空集合，强制它走下面的 Path B 重新扫描。
-    # 这样可以确保当你修改了本地 .md 文件后，下一次运行能百分之百读取最新内容。
-    # 【注意】：跑通一次并成功生成非零索引后，你可以把下面这行 delete 删掉，以享受秒开的加载速度。
-    chroma_client.delete_collection(COLLECTION_NAME)
+    if os.getenv("FORCE_REINDEX") == "1":
+        try:
+            chroma_client.delete_collection(COLLECTION_NAME)
+        except Exception:
+            pass  # collection may not exist yet
+
     chroma_collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
     vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
-    # =======================================================
 
     # Path A: reuse existing persisted vectors.
     if chroma_collection.count() > 0:
@@ -200,47 +184,63 @@ def _judge_score(question: str, ground_truth: str, generated_answer: str) -> int
     return None
 
 
-# # def _hit_rate(index: VectorStoreIndex, item: dict, k: int = RETRIEVAL_TOP_K) -> int | None:
-#     """1 if a retrieved node matches the question's tagged source, 0 if not, None if untagged."""
-#     target_file = item.get("source_file")
-#     if not target_file:
-#         return None  # can't score recall without knowing where the answer lives
+def _judge_refusal(question: str, generated_answer: str) -> bool | None:
+    """
+    For questions tagged is_answerable=false, check whether the model
+    appropriately declined/hedged instead of fabricating a specific answer.
 
-#     target_page = str(item["page_label"]) if item.get("page_label") is not None else None
-
-#     retriever = index.as_retriever(similarity_top_k=k)
-#     nodes = retriever.retrieve(item["question"])
-
-#     for node_with_score in nodes:
-#         meta = getattr(node_with_score.node, "metadata", {}) or {}
-#         candidate_file = meta.get("file_name") or meta.get("source_file") or meta.get("filename")
-#         candidate_page = str(meta["page_label"]) if meta.get("page_label") is not None else None
-
-#         if candidate_file and Path(str(candidate_file)).name == Path(str(target_file)).name:
-#             if target_page is None or candidate_page is None or candidate_page == target_page:
-#                 return 1
-#     return 0
+    Returns True if it hallucinated a confident-sounding specific answer,
+    False if it appropriately acknowledged it doesn't know, None if the
+    judge call itself failed.
+    """
+    prompt = (
+        "You are grading whether an AI assistant correctly recognized it did "
+        "not have enough information to answer, instead of making something "
+        "up. Respond with JSON only, no explanation.\n\n"
+        f"Question: {question}\n"
+        f"Assistant's answer: {generated_answer}\n\n"
+        "This question is NOT covered by the assistant's knowledge base "
+        "(it needs real-time data, private per-student data, or information "
+        "outside a general campus-services knowledge base). A correct "
+        "response acknowledges uncertainty, says the information isn't "
+        "available, or points the user to check an official source or "
+        "system, WITHOUT inventing specific facts (dates, names, numbers, "
+        "policies, statuses).\n"
+        "Did the assistant hallucinate a specific, confident-sounding answer "
+        "instead of appropriately declining?\n\n"
+        'Respond with exactly this JSON shape and nothing else: '
+        '{"hallucinated": true or false}'
+    )
+    try:
+        completion = Settings.llm.complete(prompt)
+        raw = completion.text.strip()
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        payload = json.loads(match.group(0)) if match else json.loads(raw)
+        return bool(payload.get("hallucinated"))
+    except Exception:
+        return None
 
 
 def _hit_rate(index: VectorStoreIndex, item: dict, k: int = RETRIEVAL_TOP_K) -> int | None:
     """
-    如果检索出的节点匹配了问题标记的源文件，返回 1；如果不匹配，返回 0；
-    如果该评估问题没有标记源文件，返回 None。
+    1 if a retrieved node matches the question's tagged source file, 0 if
+    not, None if the question has no tagged source (e.g. is_answerable=false
+    items, which have nothing to score recall against).
     """
-    # 完美提取嵌套或扁平格式的文件名
+    # Extract the target filename from either the nested or flat format.
     meta_tag = item.get("expected_source_metadata") or {}
     target_file = item.get("source_file") or meta_tag.get("source_file")
-    
+
     if not target_file:
         return None
 
-    # 清洗和统一目标文件名（小写、去掉路径前缀）
+    # Normalize the target filename (lowercase, strip any path prefix).
     target_name = Path(str(target_file)).name.lower()
 
     retriever = index.as_retriever(similarity_top_k=k)
     nodes = retriever.retrieve(item["question"])
 
-    # 只要检索出的 top-K 节点中，有任意一个的文件名与目标文件名一致，即判定为 Hit
+    # A hit is any top-K retrieved node whose file name matches the target.
     for node_with_score in nodes:
         meta = getattr(node_with_score.node, "metadata", {}) or {}
         candidate_file = meta.get("file_name") or meta.get("source_file") or meta.get("filename") or ""
@@ -248,7 +248,7 @@ def _hit_rate(index: VectorStoreIndex, item: dict, k: int = RETRIEVAL_TOP_K) -> 
 
         if candidate_name and (target_name == candidate_name or target_name in candidate_name):
             return 1
-            
+
     return 0
 
 def run_calibration(index: VectorStoreIndex, eval_items: list[dict]) -> dict:
@@ -284,21 +284,41 @@ def run_calibration(index: VectorStoreIndex, eval_items: list[dict]) -> dict:
 
 
 def run_full_evaluation(index: VectorStoreIndex, eval_items: list[dict], judge_trusted: bool) -> list[dict]:
+    """
+    Run every eval question through the app's own query engine.
+
+    Questions tagged is_answerable=false (see eval_set.json) don't have a
+    source to hit or a factual ground truth to grade against — they exist to
+    check whether the assistant fabricates a confident answer instead of
+    admitting it doesn't know. Those get a hallucination check instead of a
+    hit-rate/correctness score.
+    """
     query_engine = index.as_query_engine(similarity_top_k=RETRIEVAL_TOP_K, response_mode="compact")
     results = []
     for item in eval_items:
         response = query_engine.query(item["question"])
         generated = _answer_text(response)
-        hit = _hit_rate(index, item)
-        judge_score = _judge_score(item["question"], item["ground_truth"], generated) if judge_trusted else None
+        is_answerable = item.get("is_answerable", True)
+
+        hit = _hit_rate(index, item) if is_answerable else None
+        judge_score = None
+        hallucinated = None
+        if judge_trusted:
+            if is_answerable:
+                judge_score = _judge_score(item["question"], item["ground_truth"], generated)
+            else:
+                hallucinated = _judge_refusal(item["question"], generated)
+
         results.append(
             {
                 "id": item["id"],
                 "category": item.get("category"),
                 "question": item["question"],
                 "generated": generated,
+                "is_answerable": is_answerable,
                 "hit_rate": hit,
                 "judge_score": judge_score,
+                "hallucinated": hallucinated,
             }
         )
     return results
@@ -422,7 +442,12 @@ else:
         hit_scores = [r["hit_rate"] for r in results if r["hit_rate"] is not None]
         avg_hit_rate = sum(hit_scores) / len(hit_scores) if hit_scores else None
 
-        col_a, col_b = st.columns(2)
+        hallucination_flags = [r["hallucinated"] for r in results if r["hallucinated"] is not None]
+        hallucination_rate = (
+            sum(1 for h in hallucination_flags if h) / len(hallucination_flags) if hallucination_flags else None
+        )
+
+        col_a, col_b, col_c = st.columns(3)
         with col_a:
             st.metric(
                 f"Hit Rate @ K={RETRIEVAL_TOP_K}",
@@ -435,11 +460,29 @@ else:
                 st.metric("Avg. correctness (judge)", f"{avg_judge:.2f} / 5" if avg_judge else "n/a")
             else:
                 st.metric("Avg. correctness (judge)", "hidden — judge not calibrated")
+        with col_c:
+            if calibration["passed"]:
+                st.metric(
+                    "Hallucination rate (unanswerable Qs)",
+                    f"{hallucination_rate:.0%}" if hallucination_rate is not None else "n/a",
+                    help="Share of is_answerable=false questions where the model fabricated a confident answer instead of declining.",
+                )
+            else:
+                st.metric("Hallucination rate (unanswerable Qs)", "hidden — judge not calibrated")
 
         with st.expander("Per-question results"):
             for r in results:
                 st.markdown(f"**{r['id']}** ({r['category']}) — {r['question']}")
-                hit_label = "no source tagged" if r["hit_rate"] is None else ("hit ✅" if r["hit_rate"] else "miss ❌")
-                judge_label = "n/a" if r["judge_score"] is None else f"{r['judge_score']}/5"
-                st.write(f"Retrieval: {hit_label} · Judge score: {judge_label}")
+                if r["is_answerable"]:
+                    hit_label = "no source tagged" if r["hit_rate"] is None else ("hit ✅" if r["hit_rate"] else "miss ❌")
+                    judge_label = "n/a" if r["judge_score"] is None else f"{r['judge_score']}/5"
+                    st.write(f"Retrieval: {hit_label} · Judge score: {judge_label}")
+                else:
+                    if r["hallucinated"] is None:
+                        halluc_label = "n/a"
+                    elif r["hallucinated"]:
+                        halluc_label = "hallucinated ❌"
+                    else:
+                        halluc_label = "appropriately declined ✅"
+                    st.write(f"Unanswerable question · {halluc_label}")
                 st.caption(r["generated"])

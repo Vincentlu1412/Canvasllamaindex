@@ -21,11 +21,10 @@ APP_TITLE = "Local Berkeley Canvas Assistant"
 APP_SUBTITLE = "Fully local LlamaIndex + ChromaDB + Ollama stack."
 CHROMA_DIR = Path(os.getenv("CHROMA_PERSIST_DIR", "chroma_db"))
 COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "documents")
-# Points at data/source_docs specifically (not data/), so eval_set.json and
-# other non-content files in data/ never get swept into the index by
-# SimpleDirectoryReader's recursive scan. This was a real leak: the eval
-# questions and ground-truth answers were previously being embedded as
-# retrievable documents.
+# Scoped to data/source_docs rather than data/ so that eval_set.json and
+# other non-content files are never swept into the index by
+# SimpleDirectoryReader's recursive scan — embedding the eval questions and
+# their ground-truth answers would make retrieval scores meaningless.
 DOCS_DIR = Path(os.getenv("LLAMAINDEX_DOCS_DIR", "data/source_docs"))
 EVAL_SET_PATH = Path(os.getenv("EVAL_SET_PATH", "eval_set.json"))
 
@@ -33,11 +32,10 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 LOCAL_EMBED_MODEL = os.getenv("LOCAL_EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 
-# Judge is not trusted on the full eval set until it agrees with human
-# scores on the hand-scored calibration subset at least this often.
-# This is the fix for Alex's "GPT-4o grading GPT-4o" note: the same model
-# family doing the generation is also doing the judging, so we verify it
-# against humans before trusting it on the rest of the questions.
+# The judge is not trusted on the full eval set until it agrees with human
+# scores on the hand-scored calibration subset at least this often. The same
+# model family generates and grades the answers, so its scores are worthless
+# until validated against humans first.
 CALIBRATION_AGREEMENT_THRESHOLD = 0.7
 RETRIEVAL_TOP_K = 3
 
@@ -173,16 +171,13 @@ def get_or_create_index() -> VectorStoreIndex:
 # ---------------------------------------------------------------------------
 # Evaluation harness
 #
-# Two things changed from the original prep-sheet plan, based on Alex's
-# review:
+# Two properties this harness depends on:
 #
-# 1. eval_set.json now carries `source_file` / `page_label` per question, so
-#    Hit Rate can actually be computed against a real ground-truth location
-#    instead of having nowhere to read it from.
-# 2. Before the LLM judge is trusted on the full set, it's checked against a
-#    hand-scored subset (`human_score` present in eval_set.json). If it
-#    doesn't agree with humans often enough, the app refuses to show judge
-#    scores for the rest and tells you to fix the judge prompt first.
+# 1. Each question in eval_set.json carries the source file its answer lives
+#    in, so Hit Rate can be scored against a real ground-truth location.
+# 2. The LLM judge is checked against a hand-scored subset (`human_score`)
+#    before it is trusted on the full set. Below the agreement threshold,
+#    judge scores are withheld rather than reported as if meaningful.
 # ---------------------------------------------------------------------------
 
 
@@ -367,9 +362,8 @@ def run_full_evaluation(index: VectorStoreIndex, eval_items: list[dict], judge_t
 # ---------------------------------------------------------------------------
 # UI
 #
-# Developer/debug details (model names, local paths, Ollama URL) are now
-# tucked behind an explicit toggle instead of always being on screen, and
-# the previously-shown absolute filesystem path is no longer displayed.
+# Developer/debug details (model names, local paths, Ollama URL) sit behind
+# an explicit toggle so the default view stays clean for non-technical users.
 # ---------------------------------------------------------------------------
 
 with st.sidebar:

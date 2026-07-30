@@ -1,10 +1,9 @@
 """Guardrails for the evaluation set and knowledge base.
 
-These exist because of a real bug: eval_set.json's ground_truth answers
-used to be verbatim copies of the source docs, and the source docs had the
-eval questions' wording baked directly into them, which silently inflated
-both Hit Rate and judge scores. This file pins down the invariants that
-keep that from happening again.
+A RAG benchmark leaks silently: if ground_truth answers are verbatim copies
+of the source docs, or the docs contain the eval questions' own wording,
+both Hit Rate and judge scores are inflated and the pipeline looks far
+better than it is. These tests pin down the invariants that prevent it.
 """
 
 from __future__ import annotations

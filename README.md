@@ -61,23 +61,26 @@ to catch that failure mode, not just to measure "does it sound right."
   deadlines. Personal data is indexed in memory in a *separate* index from
   the public knowledge base, never persisted to disk, never committed.
 
-## A real bug this project already found (and fixed)
+## Why the eval harness has its own tests
 
-Early on, the evaluation set had a silent data-leakage problem: `ground_truth`
-answers were verbatim copies of the source docs, and the source docs had the
-eval questions' exact wording baked into them (`"Where can I find X? X is
-..."`). That meant retrieval was matching *question against question*
-instead of *question against answer content*, and the LLM judge was scoring
-"did it copy the text back correctly," not "did it understand and answer
-correctly." Both metrics were quietly inflated.
+RAG benchmarks leak silently, and a leaky benchmark will happily tell you
+your pipeline is excellent right up until a real user asks it something.
 
-The fix — paraphrasing `ground_truth`, rewriting source docs to be purely
-declarative, and adding 15 "the knowledge base can't answer this" questions
-to measure hallucination — is now pinned down as regression tests in
-[`tests/test_eval_set.py`](tests/test_eval_set.py), run on every push via
-GitHub Actions. It's a good example of why an eval harness needs its own
-tests: a leaky benchmark will happily tell you your RAG pipeline is great
-right up until a real user asks it something.
+Two failure modes this project guards against explicitly:
+
+- **`ground_truth` copied verbatim from the source docs.** The LLM judge
+  then scores "did it copy the text back," not "did it understand and
+  answer correctly."
+- **Eval questions' wording baked into the docs themselves**
+  (`"Where can I find X? X is ..."`). Retrieval then matches *question
+  against question* rather than *question against answer content*, and Hit
+  Rate measures nothing useful.
+
+Both are invisible in the metrics — they just make the numbers look good.
+So they're enforced mechanically in
+[`tests/test_eval_set.py`](tests/test_eval_set.py) and run on every push
+via GitHub Actions, alongside 15 deliberately-unanswerable questions that
+measure whether the assistant declines instead of fabricating.
 
 ## Architecture
 

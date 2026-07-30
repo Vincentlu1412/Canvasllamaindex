@@ -4,3 +4,7 @@ llama-index-core>=0.10
 llama-index-embeddings-huggingface>=0.2
 llama-index-llms-ollama>=0.1
 llama-index-vector-stores-chroma>=0.1
+
+# scripts/sync_source_docs.py
+requests>=2.31
+beautifulsoup4>=4.12

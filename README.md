@@ -119,7 +119,12 @@ pip install -r requirements.txt
 #    run on a laptop; swap via OLLAMA_MODEL for something bigger)
 ollama pull qwen2.5:3b-instruct
 
-# 3. Run the app
+# 3. Pre-download the embedding model into the local HuggingFace cache.
+#    Do this before the first app start — afterwards the app loads it
+#    offline and makes no network calls at all.
+python scripts/download_models.py
+
+# 4. Run the app
 streamlit run hello_streamlit.py
 ```
 
@@ -252,6 +257,32 @@ changes by hand, keeping the declarative, citation-per-section style.
 - Larger, more systematically sourced eval set (current 45 questions were
   hand-authored; a bigger set drawn from real student questions would give
   more reliable metrics).
+
+## Troubleshooting
+
+**`RuntimeError: Cannot send a request, as the client has been closed`**
+on startup, with a traceback through `huggingface_hub` / `httpx`:
+
+`huggingface_hub` 1.0 moved to a per-process shared `httpx` client, which
+can be closed and then reused under Streamlit's rerun/threading model. Fix
+by taking the download out of the app entirely:
+
+```bash
+python scripts/download_models.py     # populates the local cache once
+streamlit run hello_streamlit.py      # now loads offline, no network call
+```
+
+If the download script itself fails the same way, pin to the pre-`httpx`
+release:
+
+```bash
+pip install 'huggingface_hub<1.0'
+```
+
+**Python version.** This stack (torch, sentence-transformers, chromadb) is
+tested on 3.11/3.12. On very new interpreters (3.13+) you may hit
+packaging issues in the dependencies rather than in this project — a 3.11
+or 3.12 environment is the low-friction choice.
 
 ## Limitations (read before trusting this in production)
 

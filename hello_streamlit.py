@@ -76,8 +76,28 @@ def _load_source_documents() -> list[Document]:
     ]
 
 
+def _load_embed_model() -> HuggingFaceEmbedding:
+    """Load the embedding model, preferring the local HuggingFace cache.
+
+    The app is meant to run fully offline once set up, but by default
+    sentence-transformers still calls the HuggingFace Hub on every load to
+    check for updates. Besides defeating the offline claim, that network
+    call is the fragile step in startup: huggingface_hub >= 1.0 shares one
+    httpx client per process, and under Streamlit's rerun/threading model
+    it can be closed and then reused, which surfaces as
+    "RuntimeError: Cannot send a request, as the client has been closed."
+
+    So try offline first and only reach for the network if the model isn't
+    cached yet. Run scripts/download_models.py once to populate the cache.
+    """
+    try:
+        return HuggingFaceEmbedding(model_name=LOCAL_EMBED_MODEL, local_files_only=True)
+    except Exception:
+        return HuggingFaceEmbedding(model_name=LOCAL_EMBED_MODEL)
+
+
 def _configure_local_models() -> None:
-    Settings.embed_model = HuggingFaceEmbedding(model_name=LOCAL_EMBED_MODEL)
+    Settings.embed_model = _load_embed_model()
     Settings.llm = Ollama(
         model=OLLAMA_MODEL,
         base_url=OLLAMA_BASE_URL,

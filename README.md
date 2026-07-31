@@ -263,21 +263,25 @@ changes by hand, keeping the declarative, citation-per-section style.
 **`RuntimeError: Cannot send a request, as the client has been closed`**
 on startup, with a traceback through `huggingface_hub` / `httpx`:
 
-`huggingface_hub` 1.0 moved to a per-process shared `httpx` client, which
-can be closed and then reused under Streamlit's rerun/threading model. Fix
-by taking the download out of the app entirely:
+Despite how it reads, this is almost always a **connection failure to
+`huggingface.co`** surfacing late — `huggingface_hub` shares one `httpx`
+client per process, and once a download times out the closed client is
+reported instead of the original timeout. Take the download out of the app
+and, if needed, route it through a mirror:
 
 ```bash
-python scripts/download_models.py     # populates the local cache once
-streamlit run hello_streamlit.py      # now loads offline, no network call
+python scripts/download_models.py            # populates the local cache once
+python scripts/download_models.py --mirror   # via hf-mirror.com, if HF is blocked/slow
+streamlit run hello_streamlit.py             # now loads offline, no network call
 ```
 
-If the download script itself fails the same way, pin to the pre-`httpx`
-release:
+`--mirror` just sets `HF_ENDPOINT=https://hf-mirror.com`; you can export
+that yourself instead if you prefer.
 
-```bash
-pip install 'huggingface_hub<1.0'
-```
+Do **not** "fix" this by pinning `huggingface_hub<1.0` — current
+`transformers` (5.x) requires `huggingface-hub>=1.5`, so the downgrade
+produces an inconsistent environment. If you already did, restore it with
+`pip install 'huggingface_hub>=1.5,<2'`.
 
 **Python version.** This stack (torch, sentence-transformers, chromadb) is
 tested on 3.11/3.12. On very new interpreters (3.13+) you may hit
